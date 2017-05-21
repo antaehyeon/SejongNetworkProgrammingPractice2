@@ -3,6 +3,7 @@
 #include <ws2tcpip.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <sstream>
 #include "resource.h"
 
 #define MULTICASTIP "235.7.8.1"
@@ -22,6 +23,8 @@ int recvn(SOCKET s, char *buf, int len, int flags);
 DWORD WINAPI Main(LPVOID arg);
 DWORD WINAPI Receiver(LPVOID arg);
 
+bool Connect(char * ip, char * port);
+
 SOCKET sock; // 소켓
 char buf[BUFSIZE+1]; // 데이터 송수신 버퍼
 char sendbuf[BUFSIZE + 1]; // 데이터 송신 버퍼
@@ -29,11 +32,13 @@ char name[10]; // 이름 배열
 char ip[20]; // IP 배열
 char port[10]; // PORT 배열
 
+HWND ownerWindow;
 HANDLE hReadEvent, hWriteEvent; // 이벤트
 HWND hSendButton; // 보내기 버튼
 HWND inputTextBox, outputTextBox; // 편집 컨트롤
 HWND applyButton;
 HWND connectButton;
+HWND portTextBox;
 
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow)
@@ -67,14 +72,19 @@ BOOL CALLBACK DlgProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
 	switch(uMsg){
 	case WM_INITDIALOG:
+		ownerWindow = GetDlgItem(hDlg, IDD_DIALOG1);
+
 		inputTextBox = GetDlgItem(hDlg, TEXTBOX_CONTENT);
 		outputTextBox = GetDlgItem(hDlg, TEXT_CONTENT);
 		hSendButton = GetDlgItem(hDlg, BUTTON_SEND);
 		applyButton = GetDlgItem(hDlg, BUTTON_APPLY);
+		portTextBox = GetDlgItem(hDlg, TEXTBOX_PORT);
+
 		SendMessage(inputTextBox, EM_SETLIMITTEXT, BUFSIZE, 0);
 		// 적용버튼 비활성화
 		EnableWindow(applyButton, FALSE);
 		EnableWindow(hSendButton, FALSE);
+
 
 		return TRUE;
 	case WM_COMMAND:
@@ -84,6 +94,15 @@ BOOL CALLBACK DlgProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
 			GetDlgItemText(hDlg, TEXTBOX_IP, ip, 20);
 			GetDlgItemText(hDlg, TEXTBOX_PORT, port, 10);
 			EnableWindow(hSendButton, FALSE);
+			SetEvent(hWriteEvent);
+			//Connect(ip, port);
+			//MessageBoxA(NULL, NULL, "Message", MB_OK | MB_ICONINFORMATION);
+			//if (MessageBox(NULL, "YES OR NO?", "Alert Window", MB_YESNO) == IDYES) {
+			//	MessageBox(NULL, "YES !", "Yes Man", MB_OK);
+			//}
+			//else {
+			//	MessageBox(NULL, "NO!", "No Man", MB_OK);
+			//}
 
 		case BUTTON_SEND:
 			EnableWindow(hSendButton, FALSE); // 보내기 버튼 비활성화
@@ -170,6 +189,7 @@ int recvn(SOCKET s, char *buf, int len, int flags)
 DWORD WINAPI Main(LPVOID arg)
 {
 	int retval;
+	bool bConnect = false;
 
 	// 윈속 초기화
 	WSADATA wsa;
@@ -202,18 +222,25 @@ DWORD WINAPI Main(LPVOID arg)
 	if (hThread == NULL) { closesocket(sock); }
 	else { CloseHandle(hThread); }
 
-	// connect()
-	SOCKADDR_IN multiaddr;
-	ZeroMemory(&multiaddr, sizeof(multiaddr));
-	multiaddr.sin_family = AF_INET;
-	multiaddr.sin_addr.s_addr = inet_addr(MULTICASTIP);
-	multiaddr.sin_port = htons(REMOTEPORT);
-	retval = connect(sock, (SOCKADDR *)&multiaddr, sizeof(multiaddr));
-	if (retval == SOCKET_ERROR) err_quit("connect()");
-	else { DisplayText("채팅방에 접속하였습니다 :) \r\n", retval); }
-
 	while (1) {
 		WaitForSingleObject(hWriteEvent, INFINITE); // 쓰기 완료 기다리기
+
+		// connect()
+		if (!bConnect) {
+			SOCKADDR_IN multiaddr;
+			ZeroMemory(&multiaddr, sizeof(multiaddr));
+			multiaddr.sin_family = AF_INET;
+			multiaddr.sin_addr.s_addr = inet_addr(MULTICASTIP);
+			multiaddr.sin_port = htons(REMOTEPORT);
+			retval = connect(sock, (SOCKADDR *)&multiaddr, sizeof(multiaddr));
+			if (retval == SOCKET_ERROR) err_quit("connect()");
+			else {
+				char *tempBuf = "채팅방에 접속하였습니다";
+				DisplayText("채팅방에 접속하였습니다 :) \r\n", retval);
+				bConnect = true;
+			}
+			continue;
+		}
 
 	    // 문자열 길이가 0이면 보내지 않음
 		if (strlen(sendbuf) == 0) {
@@ -247,6 +274,25 @@ DWORD WINAPI Main(LPVOID arg)
 
 		EnableWindow(hSendButton, TRUE); // 보내기 버튼 활성화
 		SetEvent(hReadEvent); // 읽기 완료 알리기
+	}
+}
+
+bool Connect(char * ip, char * port) {
+	int retval;
+	SOCKADDR_IN multiaddr;
+
+	ZeroMemory(&multiaddr, sizeof(multiaddr));
+	multiaddr.sin_family = AF_INET;
+	multiaddr.sin_addr.s_addr = inet_addr(ip);
+	multiaddr.sin_port = htons((u_short)port);
+	retval = connect(sock, (SOCKADDR *)&multiaddr, sizeof(multiaddr));
+	if (retval == SOCKET_ERROR) {
+		err_quit("connect()");
+		return false;
+	}
+	else { 
+		DisplayText("채팅방에 접속하였습니다 :) \r\n", retval); 
+		return true;
 	}
 }
 
