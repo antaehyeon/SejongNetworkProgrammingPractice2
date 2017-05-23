@@ -53,10 +53,13 @@ HWND portTextBox;
 bool nickNameChange = false;
 // 재 연결을 체크하기 위한 BOOL 형 데이터
 bool bReConnect = false;
+// 자신이 보낸 데이터인지 확인하기 위한 BOOL형 데이터
+bool ownSendData = false;
 // RECEIVER MODE SELECTOR
 int receiverModeSelector = 0;
 const int SEND = 1;
 const int APPLY = 2;
+const int NEW = 3;
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow)
 {
@@ -153,6 +156,7 @@ BOOL CALLBACK DlgProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
 			strcpy(timeBuf, timeToString());
 			// 각 데이터 추출 (이름, 내용)
 			GetDlgItemText(hDlg, TEXTBOX_NICKNAME, name, BUFSIZE + 1);
+			//SetDlgItemText(hDlg, TEXTBOX_NICKNAME, tmpNameBuf);
 			GetDlgItemText(hDlg, TEXTBOX_CONTENT, sendbuf, BUFSIZE + 1);
 			SetEvent(hWriteEvent); // 쓰기 완료 알리기
 			SetFocus(inputTextBox);
@@ -163,6 +167,7 @@ BOOL CALLBACK DlgProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
 		case BUTTON_APPLY:
 			receiverModeSelector = APPLY;
 			nickNameChange = true;
+			ownSendData = true;
 			EnableWindow(hSendButton, FALSE);
 			EnableWindow(applyButton, FALSE);			
 			WaitForSingleObject(hReadEvent, INFINITE);
@@ -317,6 +322,23 @@ DWORD WINAPI Main(LPVOID arg)
 			if (retval == SOCKET_ERROR) err_quit("connect()");
 			else {
 				DisplayText("새로운 채팅방에 접속하였습니다 :) \r\n");
+
+				if (!ownSendData) {
+					strcpy(timeBuf, "NEW");
+					retval = sendto(sock, timeBuf, strlen(timeBuf), 0, (SOCKADDR *)&remoteaddr, sizeof(remoteaddr));
+					if (retval == SOCKET_ERROR) {
+						err_display("sendto()");
+						continue;
+					}
+
+					retval = sendto(sock, ownNameBuf, strlen(ownNameBuf), 0, (SOCKADDR *)&remoteaddr, sizeof(remoteaddr));
+					if (retval == SOCKET_ERROR) {
+						err_display("sendto()");
+						continue;
+					}
+				}
+
+				ownSendData = false;
 				bReConnect = false;
 			}
 		}
@@ -331,8 +353,7 @@ DWORD WINAPI Main(LPVOID arg)
 			}
 			// 시간 보내기
 			strcpy(timeBuf, "APPLY");
-			retval = sendto(sock, timeBuf, strlen(timeBuf), 0, (SOCKADDR *
-				)&remoteaddr, sizeof(remoteaddr));
+			retval = sendto(sock, timeBuf, strlen(timeBuf), 0, (SOCKADDR *)&remoteaddr, sizeof(remoteaddr));
 			if (retval == SOCKET_ERROR) {
 				err_display("sendto()");
 				continue;
@@ -482,6 +503,10 @@ DWORD WINAPI Receiver(LPVOID arg)
 			receiverModeSelector = APPLY;
 			strcpy(timeBuf, timeToString());
 		}
+		else if (strcmp(timeBuf, "NEW") == 0) {
+			receiverModeSelector = NEW;
+			strcpy(timeBuf, timeToString());
+		}
 
 		// NEW 데이터 받기
 		switch (receiverModeSelector) {
@@ -524,22 +549,59 @@ DWORD WINAPI Receiver(LPVOID arg)
 				tmpNameBuf[retval] = '\0';
 
 				DisplayText("[%s] %s 님이 %s으로 닉네임을 변경하셨습니다.\n", timeBuf, name, tmpNameBuf);
-				strcpy(ownNameBuf, tmpNameBuf);
+				//DisplayText("[%s | %s] 현재 클라이언트의 원래 ID / 바뀐 ID", ownNameBuf, tmpNameBuf);
+				if (ownSendData) {
+					strcpy(ownNameBuf, tmpNameBuf);
+					//ownSendData = false;
+				}
 				receiverModeSelector = SEND;
 
-				strcpy(ip, "235.7.8.2");
+				// 누가 이름을 변경했는데 내 이름과 똑같다
+				if (strcmp(ownNameBuf, tmpNameBuf) == 0) {
+					strcpy(ip, "235.7.8.2");
 
-				retval = setsockopt(sock, IPPROTO_IP, IP_DROP_MEMBERSHIP, (char *)&mreq, sizeof(mreq));
-				if (retval == SOCKET_ERROR) err_quit("setsockopt()");
+					retval = setsockopt(sock, IPPROTO_IP, IP_DROP_MEMBERSHIP, (char *)&mreq, sizeof(mreq));
+					if (retval == SOCKET_ERROR) err_quit("setsockopt()");
 
-				mreq.imr_multiaddr.s_addr = inet_addr(ip);
-				mreq.imr_interface.s_addr = htonl(INADDR_ANY);
-				retval = setsockopt(sock, IPPROTO_IP, IP_ADD_MEMBERSHIP, (char *)&mreq, sizeof(mreq));
-				if (retval == SOCKET_ERROR) err_quit("setsockopt()");
-				else {
-					bReConnect = true;
-					DisplayText("IP가 변경되었습니다\n");
+					mreq.imr_multiaddr.s_addr = inet_addr(ip);
+					mreq.imr_interface.s_addr = htonl(INADDR_ANY);
+					retval = setsockopt(sock, IPPROTO_IP, IP_ADD_MEMBERSHIP, (char *)&mreq, sizeof(mreq));
+					if (retval == SOCKET_ERROR) err_quit("setsockopt()");
+					else {
+						bReConnect = true;
+						DisplayText("★★★★★★★★★★★★★★★★★★★★★\n");
+						DisplayText("동일한 닉네임이 있어 채팅방이 1:1로 구성됩니다\n");
+						strcat(tmpNameBuf, "-2");
+					}
 				}
+				break;
+			case NEW:
+				// 변경된 이름 받기
+				retval = recvfrom(sock, name, BUFSIZE, 0, (SOCKADDR *)&peeraddr, &addrlen);
+				if (retval == SOCKET_ERROR) {
+					err_display("recvfrom()");
+					continue;
+				}
+				// 만약 받은 이름이 같다면
+				if (strcmp(name, ownNameBuf) == 0 && ownSendData == true)
+				{
+					strcpy(ip, "235.7.8.2");
+
+					retval = setsockopt(sock, IPPROTO_IP, IP_DROP_MEMBERSHIP, (char *)&mreq, sizeof(mreq));
+					if (retval == SOCKET_ERROR) err_quit("setsockopt()");
+
+					mreq.imr_multiaddr.s_addr = inet_addr(ip);
+					mreq.imr_interface.s_addr = htonl(INADDR_ANY);
+					retval = setsockopt(sock, IPPROTO_IP, IP_ADD_MEMBERSHIP, (char *)&mreq, sizeof(mreq));
+					if (retval == SOCKET_ERROR) err_quit("setsockopt()");
+					else {
+						bReConnect = true;
+						DisplayText("★★★★★★★★★★★★★★★★★★★★★\n");
+						DisplayText("동일한 닉네임이 있어 채팅방이 1:1로 구성됩니다\n");
+						strcat(tmpNameBuf, "-1");
+					}
+				}
+				receiverModeSelector = SEND;
 				break;
 		}
 	}
