@@ -336,6 +336,10 @@ DWORD WINAPI Main(LPVOID arg)
 						err_display("sendto()");
 						continue;
 					}
+					EnableWindow(hSendButton, TRUE); // 보내기 버튼 활성화
+					SetEvent(hReadEvent); // 읽기 완료 알리기
+					bReConnect = false;
+					continue;
 				}
 
 				ownSendData = false;
@@ -567,11 +571,12 @@ DWORD WINAPI Receiver(LPVOID arg)
 					mreq.imr_interface.s_addr = htonl(INADDR_ANY);
 					retval = setsockopt(sock, IPPROTO_IP, IP_ADD_MEMBERSHIP, (char *)&mreq, sizeof(mreq));
 					if (retval == SOCKET_ERROR) err_quit("setsockopt()");
-					else {
+					else if (ownSendData == false){
 						bReConnect = true;
-						DisplayText("★★★★★★★★★★★★★★★★★★★★★\n");
+						DisplayText("☆★★★★★★★★★★★★★★★★★★★★\n");
 						DisplayText("동일한 닉네임이 있어 채팅방이 1:1로 구성됩니다\n");
 						strcat(tmpNameBuf, "-2");
+						SetEvent(hWriteEvent);
 					}
 				}
 				break;
