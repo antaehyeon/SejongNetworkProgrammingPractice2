@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <sstream>
+#include <time.h>
 #include "resource.h"
 
 #define MULTICASTIP "235.7.8.1"
@@ -28,7 +29,7 @@ bool Connect(char * ip, char * port);
 SOCKET sock; // 소켓
 char buf[BUFSIZE+1]; // 데이터 송수신 버퍼
 char sendbuf[BUFSIZE + 1]; // 데이터 송신 버퍼
-char name[10]; // 이름 배열
+char name[BUFSIZE + 1]; // 이름 배열
 char ip[20]; // IP 배열
 char port[10]; // PORT 배열
 
@@ -90,9 +91,31 @@ BOOL CALLBACK DlgProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
 	case WM_COMMAND:
 		switch(LOWORD(wParam)){
 		case BUTTON_CONNECT:
+			int ipAddress, portAddress;
+
 			GetDlgItemText(hDlg, TEXTBOX_NICKNAME, name, 10);
 			GetDlgItemText(hDlg, TEXTBOX_IP, ip, 20);
 			GetDlgItemText(hDlg, TEXTBOX_PORT, port, 10);
+
+			// 닉네임이 비어있을 경우
+			if (strlen(name) == 0) {
+				MessageBox(NULL, "닉네임을 입력하세요", "경고", MB_OK);
+				break;
+			}
+
+			// IP D CLASS 예외처리
+			ipAddress = atoi(ip);
+			if ((ipAddress < 224) || (ipAddress > 239)) {
+				MessageBox(NULL, "IP를 제대로 입력하세요", "경고", MB_OK);
+				break;
+			}
+
+			// PORT 예외처리
+			portAddress = atoi(port);
+			if ((portAddress < 1024) || (portAddress > 49151)) {
+				MessageBox(NULL, "PORT를 제대로 입력하세요", "경고", MB_OK);
+				break;
+			}
 			EnableWindow(hSendButton, FALSE);
 			SetEvent(hWriteEvent);
 			//Connect(ip, port);
@@ -104,6 +127,7 @@ BOOL CALLBACK DlgProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
 			//	MessageBox(NULL, "NO!", "No Man", MB_OK);
 			//}
 
+		// 메세지 보내기 버튼
 		case BUTTON_SEND:
 			EnableWindow(hSendButton, FALSE); // 보내기 버튼 비활성화
 			WaitForSingleObject(hReadEvent, INFINITE); // 읽기 완료 기다리기
@@ -113,6 +137,11 @@ BOOL CALLBACK DlgProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
 			SetFocus(inputTextBox);
 			SendMessage(inputTextBox, EM_SETSEL, 0, -1);
 			return TRUE;
+
+		// 닉네임 변경버튼(적용)
+		case BUTTON_APPLY:
+
+			break;
 		case BUTTON_EXIT:
 			EndDialog(hDlg, IDCANCEL);
 			return TRUE;
