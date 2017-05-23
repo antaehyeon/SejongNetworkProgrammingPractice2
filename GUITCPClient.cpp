@@ -24,14 +24,21 @@ int recvn(SOCKET s, char *buf, int len, int flags);
 DWORD WINAPI Main(LPVOID arg);
 DWORD WINAPI Receiver(LPVOID arg);
 
+// 현재시간 출력함수
+char* timeToString(struct tm *t);
+struct tm *t;
+time_t timer;
+
 bool Connect(char * ip, char * port);
 
 SOCKET sock; // 소켓
+char timeBuf[BUFSIZE + 1]; // 시간 버퍼
 char buf[BUFSIZE+1]; // 데이터 송수신 버퍼
 char sendbuf[BUFSIZE + 1]; // 데이터 송신 버퍼
 char name[BUFSIZE + 1]; // 이름 배열
 char ip[20]; // IP 배열
 char port[10]; // PORT 배열
+char tmpNameBuf[BUFSIZE + 1]; // 변경된 이름 배열
 
 HWND ownerWindow;
 HANDLE hReadEvent, hWriteEvent; // 이벤트
@@ -40,6 +47,9 @@ HWND inputTextBox, outputTextBox; // 편집 컨트롤
 HWND applyButton;
 HWND connectButton;
 HWND portTextBox;
+
+// 닉네임이 변경됬는지 체크하기 위한 BOOL형 데이터
+bool nickNameChange = false;
 
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow)
@@ -74,12 +84,12 @@ BOOL CALLBACK DlgProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
 	switch(uMsg){
 	case WM_INITDIALOG:
 		ownerWindow = GetDlgItem(hDlg, IDD_DIALOG1);
-
 		inputTextBox = GetDlgItem(hDlg, TEXTBOX_CONTENT);
 		outputTextBox = GetDlgItem(hDlg, TEXT_CONTENT);
 		hSendButton = GetDlgItem(hDlg, BUTTON_SEND);
 		applyButton = GetDlgItem(hDlg, BUTTON_APPLY);
 		portTextBox = GetDlgItem(hDlg, TEXTBOX_PORT);
+		connectButton = GetDlgItem(hDlg, BUTTON_CONNECT);
 
 		SendMessage(inputTextBox, EM_SETLIMITTEXT, BUFSIZE, 0);
 		// 적용버튼 비활성화
@@ -90,6 +100,7 @@ BOOL CALLBACK DlgProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
 		return TRUE;
 	case WM_COMMAND:
 		switch(LOWORD(wParam)){
+		// 연결 버튼
 		case BUTTON_CONNECT:
 			int ipAddress, portAddress;
 
@@ -116,7 +127,8 @@ BOOL CALLBACK DlgProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
 				MessageBox(NULL, "PORT를 제대로 입력하세요", "경고", MB_OK);
 				break;
 			}
-			EnableWindow(hSendButton, FALSE);
+			EnableWindow(connectButton, FALSE); // 연결버튼 비활성화 : 연결을 더이상 누르지 못하게 함
+			EnableWindow(applyButton, TRUE); // 적용버튼 활성화 : 닉네임을 변경할 수 있게끔 함
 			SetEvent(hWriteEvent);
 			//Connect(ip, port);
 			//MessageBoxA(NULL, NULL, "Message", MB_OK | MB_ICONINFORMATION);
@@ -131,6 +143,11 @@ BOOL CALLBACK DlgProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
 		case BUTTON_SEND:
 			EnableWindow(hSendButton, FALSE); // 보내기 버튼 비활성화
 			WaitForSingleObject(hReadEvent, INFINITE); // 읽기 완료 기다리기
+			// 현재 시간 추출
+			timer = time(NULL);
+			t = localtime(&timer);
+			strcpy(timeBuf, timeToString(t));
+			// 각 데이터 추출 (이름, 내용)
 			GetDlgItemText(hDlg, TEXTBOX_NICKNAME, name, BUFSIZE + 1);
 			GetDlgItemText(hDlg, TEXTBOX_CONTENT, sendbuf, BUFSIZE + 1);
 			SetEvent(hWriteEvent); // 쓰기 완료 알리기
@@ -140,8 +157,16 @@ BOOL CALLBACK DlgProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
 
 		// 닉네임 변경버튼(적용)
 		case BUTTON_APPLY:
+			nickNameChange = true;
+			EnableWindow(hSendButton, FALSE);
+			EnableWindow(applyButton, FALSE);			
+			WaitForSingleObject(hReadEvent, INFINITE);
+			GetDlgItemText(hDlg, TEXTBOX_NICKNAME, tmpNameBuf, BUFSIZE + 1);
+			SetEvent(hWriteEvent);
+			SetFocus(inputTextBox);
+			SendMessage(inputTextBox, EM_SETSEL, 0, -1);
+			return TRUE;	
 
-			break;
 		case BUTTON_EXIT:
 			EndDialog(hDlg, IDCANCEL);
 			return TRUE;
@@ -271,6 +296,33 @@ DWORD WINAPI Main(LPVOID arg)
 			continue;
 		}
 
+		// 닉네임에 대한 적용버튼을 눌렀을 경우
+		if (nickNameChange) {
+			if (strlen(tmpNameBuf) == 0) {
+				nickNameChange = false;
+				EnableWindow(hSendButton, TRUE); // 보내기 버튼 활성화
+				SetEvent(hReadEvent); // 읽기 완료 알리기
+				continue;
+			}
+
+			// 변경된 닉네임 보내기
+			retval = sendto(sock, tmpNameBuf, strlen(tmpNameBuf), 0, (SOCKADDR *)&remoteaddr, sizeof(remoteaddr));
+			if (retval == SOCKET_ERROR) {
+				err_display("sendto()");
+				continue;
+			}
+			nickNameChange = false;
+			SetEvent(hReadEvent); // 읽기 완료 알리기
+			continue;
+		}
+
+		// 시간 길이가 0이면 보내지 않음
+		if (strlen(timeBuf) == 0) {
+			EnableWindow(hSendButton, TRUE); // 보내기 버튼 활성화
+			SetEvent(hReadEvent); // 읽기 완료 알리기
+			continue;
+		}
+
 	    // 문자열 길이가 0이면 보내지 않음
 		if (strlen(sendbuf) == 0) {
 			EnableWindow(hSendButton, TRUE); // 보내기 버튼 활성화
@@ -282,6 +334,13 @@ DWORD WINAPI Main(LPVOID arg)
 		if (strlen(name) == 0) {
 			EnableWindow(hSendButton, TRUE); // 보내기 버튼 활성화
 			SetEvent(hReadEvent); // 읽기 완료 알리기
+			continue;
+		}
+
+		// 시간 보내기
+		retval = sendto(sock, timeBuf, strlen(timeBuf), 0, (SOCKADDR *)&remoteaddr, sizeof(remoteaddr));
+		if (retval == SOCKET_ERROR) {
+			err_display("sendto()");
 			continue;
 		}
 
@@ -299,7 +358,7 @@ DWORD WINAPI Main(LPVOID arg)
 			continue;
 		}
 
-		DisplayText("\n[TCP 클라이언트] %d바이트를 보냈습니다.\r\n", retval);
+		//DisplayText("\n[TCP 클라이언트] %d바이트를 보냈습니다.\r\n", retval);
 
 		EnableWindow(hSendButton, TRUE); // 보내기 버튼 활성화
 		SetEvent(hReadEvent); // 읽기 완료 알리기
@@ -371,6 +430,16 @@ DWORD WINAPI Receiver(LPVOID arg)
 		// 데이터 받기
 		addrlen = sizeof(peeraddr);
 
+		// TEMP DATA 받기
+
+		// 시간 받기
+		retval = recvfrom(sock, timeBuf, BUFSIZE, 0, (SOCKADDR *)&peeraddr, &addrlen);
+		if (retval == SOCKET_ERROR) {
+			err_display("recvfrom()");
+			continue;
+		}
+		timeBuf[retval] = '\0';
+
 		// 이름 받기
 		retval = recvfrom(sock, name, 10, 0, (SOCKADDR *)&peeraddr, &addrlen);
 		if (retval == SOCKET_ERROR) {
@@ -390,7 +459,7 @@ DWORD WINAPI Receiver(LPVOID arg)
 		buf[retval] = '\0';
 		//printf("\n[UDP/%s:%d] %s\n", inet_ntoa(peeraddr.sin_addr), ntohs(peeraddr.sin_port), buf);
 		//printf("%s : %s\n", name, buf);
-		DisplayText("%s : %s\n", name, buf);
+		DisplayText("[%s] %s : %s\n", timeBuf, name, buf);
 		
 	}
 
@@ -404,4 +473,27 @@ DWORD WINAPI Receiver(LPVOID arg)
 	// 윈속 종료
 	WSACleanup();
 	return 0;
+}
+
+bool receiverAPPLY() {
+
+
+	return TRUE;
+}
+
+bool receiverSEND() {
+
+	return TRUE;
+}
+
+// 현재시간 리턴 함수
+char* timeToString(struct tm *t) {
+	static char s[20];
+
+	sprintf(s, "%04d-%02d-%02d %02d:%02d:%02d",
+		t->tm_year + 1900, t->tm_mon + 1, t->tm_mday,
+		t->tm_hour, t->tm_min, t->tm_sec
+	);
+
+	return s;
 }
