@@ -25,7 +25,7 @@ DWORD WINAPI Main(LPVOID arg);
 DWORD WINAPI Receiver(LPVOID arg);
 
 // 현재시간 출력함수
-char* timeToString(struct tm *t);
+char* timeToString();
 struct tm *t;
 time_t timer;
 
@@ -39,8 +39,7 @@ char name[BUFSIZE + 1]; // 이름 배열
 char ip[20]; // IP 배열
 char port[10]; // PORT 배열
 char tmpNameBuf[BUFSIZE + 1]; // 변경된 이름 배열
-char tempBuffer[BUFSIZE + 1];
-char tempBUfferTwo[BUFSIZE + 1];
+char ownNameBuf[BUFSIZE + 1];
 
 HWND ownerWindow;
 HANDLE hReadEvent, hWriteEvent; // 이벤트
@@ -100,8 +99,6 @@ BOOL CALLBACK DlgProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
 		// 적용버튼 비활성화
 		EnableWindow(applyButton, FALSE);
 		EnableWindow(hSendButton, FALSE);
-
-
 		return TRUE;
 	case WM_COMMAND:
 		switch(LOWORD(wParam)){
@@ -109,6 +106,7 @@ BOOL CALLBACK DlgProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
 		case BUTTON_CONNECT:
 			int ipAddress, portAddress;
 
+			GetDlgItemText(hDlg, TEXTBOX_NICKNAME, ownNameBuf, BUFSIZE + 1);
 			GetDlgItemText(hDlg, TEXTBOX_NICKNAME, name, 10);
 			GetDlgItemText(hDlg, TEXTBOX_IP, ip, 20);
 			GetDlgItemText(hDlg, TEXTBOX_PORT, port, 10);
@@ -150,9 +148,7 @@ BOOL CALLBACK DlgProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
 			EnableWindow(hSendButton, FALSE); // 보내기 버튼 비활성화
 			WaitForSingleObject(hReadEvent, INFINITE); // 읽기 완료 기다리기
 			// 현재 시간 추출
-			timer = time(NULL);
-			t = localtime(&timer);
-			strcpy(timeBuf, timeToString(t));
+			strcpy(timeBuf, timeToString());
 			// 각 데이터 추출 (이름, 내용)
 			GetDlgItemText(hDlg, TEXTBOX_NICKNAME, name, BUFSIZE + 1);
 			GetDlgItemText(hDlg, TEXTBOX_CONTENT, sendbuf, BUFSIZE + 1);
@@ -171,7 +167,7 @@ BOOL CALLBACK DlgProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
 			// 현재 시간 추출
 			timer = time(NULL);
 			t = localtime(&timer);
-			strcpy(timeBuf, timeToString(t));
+			strcpy(timeBuf, timeToString());
 			// 바뀐 닉네임 추출
 			GetDlgItemText(hDlg, TEXTBOX_NICKNAME, tmpNameBuf, BUFSIZE + 1);
 			SetEvent(hWriteEvent);
@@ -317,7 +313,15 @@ DWORD WINAPI Main(LPVOID arg)
 				continue;
 			}
 			// 시간 보내기
+			strcpy(timeBuf, "APPLY");
 			retval = sendto(sock, timeBuf, strlen(timeBuf), 0, (SOCKADDR *)&remoteaddr, sizeof(remoteaddr));
+			if (retval == SOCKET_ERROR) {
+				err_display("sendto()");
+				continue;
+			}
+
+			// 원래 닉네임 보내기
+			retval = sendto(sock, ownNameBuf, strlen(ownNameBuf), 0, (SOCKADDR *)&remoteaddr, sizeof(remoteaddr));
 			if (retval == SOCKET_ERROR) {
 				err_display("sendto()");
 				continue;
@@ -458,6 +462,11 @@ DWORD WINAPI Receiver(LPVOID arg)
 		}
 		timeBuf[retval] = '\0';
 
+		if (strcmp(timeBuf, "APPLY") == 0) {
+			receiverModeSelector = APPLY;
+			strcpy(timeBuf, timeToString());
+		}
+
 		// NEW 데이터 받기
 		switch (receiverModeSelector) {
 			case SEND:
@@ -483,6 +492,14 @@ DWORD WINAPI Receiver(LPVOID arg)
 				DisplayText("[%s | %s] %s : %s\n", timeBuf, inet_ntoa(peeraddr.sin_addr), name, buf);
 				break;
 			case APPLY:
+				// 원래 이름 받기 (임시로)
+				retval = recvfrom(sock, name, BUFSIZE, 0, (SOCKADDR *)&peeraddr, &addrlen);
+				if (retval == SOCKET_ERROR) {
+					err_display("recvfrom()");
+					continue;
+				}
+				name[retval] = '\0';
+
 				// 변경된 이름 받기
 				retval = recvfrom(sock, tmpNameBuf, BUFSIZE, 0, (SOCKADDR *)&peeraddr, &addrlen);
 				if (retval == SOCKET_ERROR) {
@@ -490,9 +507,10 @@ DWORD WINAPI Receiver(LPVOID arg)
 					continue;
 				}
 				tmpNameBuf[retval] = '\0';
-				
+
 				DisplayText("[%s] %s 님이 %s으로 닉네임을 변경하셨습니다.\n", timeBuf, name, tmpNameBuf);
-				strcmp(name, tmpNameBuf);
+				strcpy(ownNameBuf, tmpNameBuf);
+				receiverModeSelector = SEND;
 				break;
 		}
 	}
@@ -510,7 +528,10 @@ DWORD WINAPI Receiver(LPVOID arg)
 }
 
 // 현재시간 리턴 함수
-char* timeToString(struct tm *t) {
+char* timeToString() {
+	timer = time(NULL);
+	t = localtime(&timer);
+
 	static char s[20];
 
 	sprintf(s, "%04d-%02d-%02d %02d:%02d:%02d",
