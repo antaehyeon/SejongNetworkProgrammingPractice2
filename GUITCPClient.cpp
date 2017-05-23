@@ -51,6 +51,8 @@ HWND portTextBox;
 
 // 닉네임이 변경됬는지 체크하기 위한 BOOL형 데이터
 bool nickNameChange = false;
+// 재 연결을 체크하기 위한 BOOL 형 데이터
+bool bReConnect = false;
 // RECEIVER MODE SELECTOR
 int receiverModeSelector = 0;
 const int SEND = 1;
@@ -304,6 +306,21 @@ DWORD WINAPI Main(LPVOID arg)
 			continue;
 		}
 
+		// 새로운 주소로 Connect 하는 과정
+		if (bReConnect) {
+			remoteaddr.sin_addr.s_addr = inet_addr(ip);
+			remoteaddr.sin_port = htons((u_short)port);
+
+			multiaddr.sin_addr.s_addr = inet_addr(ip);
+			multiaddr.sin_port = htons((u_short)port);
+			retval = connect(sock, (SOCKADDR *)&multiaddr, sizeof(multiaddr));
+			if (retval == SOCKET_ERROR) err_quit("connect()");
+			else {
+				DisplayText("새로운 채팅방에 접속하였습니다 :) \r\n");
+				bReConnect = false;
+			}
+		}
+
 		// 닉네임에 대한 적용버튼을 눌렀을 경우
 		if (nickNameChange) {
 			if (strlen(tmpNameBuf) == 0) {
@@ -314,7 +331,8 @@ DWORD WINAPI Main(LPVOID arg)
 			}
 			// 시간 보내기
 			strcpy(timeBuf, "APPLY");
-			retval = sendto(sock, timeBuf, strlen(timeBuf), 0, (SOCKADDR *)&remoteaddr, sizeof(remoteaddr));
+			retval = sendto(sock, timeBuf, strlen(timeBuf), 0, (SOCKADDR *
+				)&remoteaddr, sizeof(remoteaddr));
 			if (retval == SOCKET_ERROR) {
 				err_display("sendto()");
 				continue;
@@ -423,8 +441,7 @@ DWORD WINAPI Receiver(LPVOID arg)
 
 	// SO_REUSEADDR 옵션 설정
 	BOOL optval = TRUE;
-	retval = setsockopt(sock, SOL_SOCKET,
-		SO_REUSEADDR, (char *)&optval, sizeof(optval));
+	retval = setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, (char *)&optval, sizeof(optval));
 	if (retval == SOCKET_ERROR) err_quit("setsockopt()");
 
 	// bind()
@@ -440,8 +457,7 @@ DWORD WINAPI Receiver(LPVOID arg)
 	struct ip_mreq mreq;
 	mreq.imr_multiaddr.s_addr = inet_addr(ip);
 	mreq.imr_interface.s_addr = htonl(INADDR_ANY);
-	retval = setsockopt(sock, IPPROTO_IP, IP_ADD_MEMBERSHIP,
-		(char *)&mreq, sizeof(mreq));
+	retval = setsockopt(sock, IPPROTO_IP, IP_ADD_MEMBERSHIP, (char *)&mreq, sizeof(mreq));
 	if (retval == SOCKET_ERROR) err_quit("setsockopt()");
 
 	// 데이터 통신에 사용할 변수
@@ -488,7 +504,6 @@ DWORD WINAPI Receiver(LPVOID arg)
 
 				// 받은 데이터 출력
 				//printf("\n[UDP/%s:%d] %s\n", inet_ntoa(peeraddr.sin_addr), ntohs(peeraddr.sin_port), buf);
-				//printf("%s : %s\n", name, buf);
 				DisplayText("[%s | %s] %s : %s\n", timeBuf, inet_ntoa(peeraddr.sin_addr), name, buf);
 				break;
 			case APPLY:
@@ -511,6 +526,20 @@ DWORD WINAPI Receiver(LPVOID arg)
 				DisplayText("[%s] %s 님이 %s으로 닉네임을 변경하셨습니다.\n", timeBuf, name, tmpNameBuf);
 				strcpy(ownNameBuf, tmpNameBuf);
 				receiverModeSelector = SEND;
+
+				strcpy(ip, "235.7.8.2");
+
+				retval = setsockopt(sock, IPPROTO_IP, IP_DROP_MEMBERSHIP, (char *)&mreq, sizeof(mreq));
+				if (retval == SOCKET_ERROR) err_quit("setsockopt()");
+
+				mreq.imr_multiaddr.s_addr = inet_addr(ip);
+				mreq.imr_interface.s_addr = htonl(INADDR_ANY);
+				retval = setsockopt(sock, IPPROTO_IP, IP_ADD_MEMBERSHIP, (char *)&mreq, sizeof(mreq));
+				if (retval == SOCKET_ERROR) err_quit("setsockopt()");
+				else {
+					bReConnect = true;
+					DisplayText("IP가 변경되었습니다\n");
+				}
 				break;
 		}
 	}
