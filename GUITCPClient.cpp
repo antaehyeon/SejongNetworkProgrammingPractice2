@@ -39,6 +39,8 @@ char name[BUFSIZE + 1]; // 이름 배열
 char ip[20]; // IP 배열
 char port[10]; // PORT 배열
 char tmpNameBuf[BUFSIZE + 1]; // 변경된 이름 배열
+char tempBuffer[BUFSIZE + 1];
+char tempBUfferTwo[BUFSIZE + 1];
 
 HWND ownerWindow;
 HANDLE hReadEvent, hWriteEvent; // 이벤트
@@ -50,7 +52,10 @@ HWND portTextBox;
 
 // 닉네임이 변경됬는지 체크하기 위한 BOOL형 데이터
 bool nickNameChange = false;
-
+// RECEIVER MODE SELECTOR
+int receiverModeSelector = 0;
+const int SEND = 1;
+const int APPLY = 2;
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow)
 {
@@ -141,6 +146,7 @@ BOOL CALLBACK DlgProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
 
 		// 메세지 보내기 버튼
 		case BUTTON_SEND:
+			receiverModeSelector = SEND;
 			EnableWindow(hSendButton, FALSE); // 보내기 버튼 비활성화
 			WaitForSingleObject(hReadEvent, INFINITE); // 읽기 완료 기다리기
 			// 현재 시간 추출
@@ -157,10 +163,16 @@ BOOL CALLBACK DlgProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
 
 		// 닉네임 변경버튼(적용)
 		case BUTTON_APPLY:
+			receiverModeSelector = APPLY;
 			nickNameChange = true;
 			EnableWindow(hSendButton, FALSE);
 			EnableWindow(applyButton, FALSE);			
 			WaitForSingleObject(hReadEvent, INFINITE);
+			// 현재 시간 추출
+			timer = time(NULL);
+			t = localtime(&timer);
+			strcpy(timeBuf, timeToString(t));
+			// 바뀐 닉네임 추출
 			GetDlgItemText(hDlg, TEXTBOX_NICKNAME, tmpNameBuf, BUFSIZE + 1);
 			SetEvent(hWriteEvent);
 			SetFocus(inputTextBox);
@@ -304,6 +316,12 @@ DWORD WINAPI Main(LPVOID arg)
 				SetEvent(hReadEvent); // 읽기 완료 알리기
 				continue;
 			}
+			// 시간 보내기
+			retval = sendto(sock, timeBuf, strlen(timeBuf), 0, (SOCKADDR *)&remoteaddr, sizeof(remoteaddr));
+			if (retval == SOCKET_ERROR) {
+				err_display("sendto()");
+				continue;
+			}
 
 			// 변경된 닉네임 보내기
 			retval = sendto(sock, tmpNameBuf, strlen(tmpNameBuf), 0, (SOCKADDR *)&remoteaddr, sizeof(remoteaddr));
@@ -312,6 +330,8 @@ DWORD WINAPI Main(LPVOID arg)
 				continue;
 			}
 			nickNameChange = false;
+			EnableWindow(applyButton, TRUE); // 적용 버튼 활성화
+			EnableWindow(hSendButton, TRUE); // 보내기 버튼 활성화
 			SetEvent(hReadEvent); // 읽기 완료 알리기
 			continue;
 		}
@@ -430,8 +450,6 @@ DWORD WINAPI Receiver(LPVOID arg)
 		// 데이터 받기
 		addrlen = sizeof(peeraddr);
 
-		// TEMP DATA 받기
-
 		// 시간 받기
 		retval = recvfrom(sock, timeBuf, BUFSIZE, 0, (SOCKADDR *)&peeraddr, &addrlen);
 		if (retval == SOCKET_ERROR) {
@@ -440,27 +458,43 @@ DWORD WINAPI Receiver(LPVOID arg)
 		}
 		timeBuf[retval] = '\0';
 
-		// 이름 받기
-		retval = recvfrom(sock, name, 10, 0, (SOCKADDR *)&peeraddr, &addrlen);
-		if (retval == SOCKET_ERROR) {
-			err_display("recvfrom()");
-			continue;
-		}
-		name[retval] = '\0';
+		// NEW 데이터 받기
+		switch (receiverModeSelector) {
+			case SEND:
+				// 이름 받기
+				retval = recvfrom(sock, name, BUFSIZE, 0, (SOCKADDR *)&peeraddr, &addrlen);
+				if (retval == SOCKET_ERROR) {
+					err_display("recvfrom()");
+					continue;
+				}
+				name[retval] = '\0';
 
-		// 데이터 받기
-		retval = recvfrom(sock, buf, BUFSIZE, 0, (SOCKADDR *)&peeraddr, &addrlen);
-		if (retval == SOCKET_ERROR) {
-			err_display("recvfrom()");
-			continue;
-		}
+				// 데이터 받기
+				retval = recvfrom(sock, buf, BUFSIZE, 0, (SOCKADDR *)&peeraddr, &addrlen);
+				if (retval == SOCKET_ERROR) {
+					err_display("recvfrom()");
+					continue;
+				}
+				buf[retval] = '\0';
 
-		// 받은 데이터 출력
-		buf[retval] = '\0';
-		//printf("\n[UDP/%s:%d] %s\n", inet_ntoa(peeraddr.sin_addr), ntohs(peeraddr.sin_port), buf);
-		//printf("%s : %s\n", name, buf);
-		DisplayText("[%s] %s : %s\n", timeBuf, name, buf);
-		
+				// 받은 데이터 출력
+				//printf("\n[UDP/%s:%d] %s\n", inet_ntoa(peeraddr.sin_addr), ntohs(peeraddr.sin_port), buf);
+				//printf("%s : %s\n", name, buf);
+				DisplayText("[%s | %s] %s : %s\n", timeBuf, inet_ntoa(peeraddr.sin_addr), name, buf);
+				break;
+			case APPLY:
+				// 변경된 이름 받기
+				retval = recvfrom(sock, tmpNameBuf, BUFSIZE, 0, (SOCKADDR *)&peeraddr, &addrlen);
+				if (retval == SOCKET_ERROR) {
+					err_display("recvfrom()");
+					continue;
+				}
+				tmpNameBuf[retval] = '\0';
+				
+				DisplayText("[%s] %s 님이 %s으로 닉네임을 변경하셨습니다.\n", timeBuf, name, tmpNameBuf);
+				strcmp(name, tmpNameBuf);
+				break;
+		}
 	}
 
 	// 멀티캐스트 그룹 탈퇴
@@ -477,11 +511,6 @@ DWORD WINAPI Receiver(LPVOID arg)
 
 bool receiverAPPLY() {
 
-
-	return TRUE;
-}
-
-bool receiverSEND() {
 
 	return TRUE;
 }
