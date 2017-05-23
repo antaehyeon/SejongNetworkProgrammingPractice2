@@ -271,33 +271,33 @@ DWORD WINAPI Main(LPVOID arg)
 	retval = setsockopt(sock, IPPROTO_IP, IP_MULTICAST_TTL, (char *)&ttl, sizeof(ttl));
 	if (retval == SOCKET_ERROR) err_quit("setsockopt()");
 
-	// 소켓 주소 구조체 초기화
-	SOCKADDR_IN remoteaddr;
-	ZeroMemory(&remoteaddr, sizeof(remoteaddr));
-	remoteaddr.sin_family = AF_INET;
-	remoteaddr.sin_addr.s_addr = inet_addr(MULTICASTIP);
-	remoteaddr.sin_port = htons(REMOTEPORT);
-
 	// 데이터 통신에 사용할 변수
 	//char sendbuf[BUFSIZE + 1];
 	int len;
 	HANDLE hThread;
-
-	//리시버 스레드 생성
-	hThread = CreateThread(NULL, 0, Receiver, (LPVOID)sock, 0, NULL);
-	if (hThread == NULL) { closesocket(sock); }
-	else { CloseHandle(hThread); }
+	SOCKADDR_IN remoteaddr;
+	SOCKADDR_IN multiaddr;
 
 	while (1) {
 		WaitForSingleObject(hWriteEvent, INFINITE); // 쓰기 완료 기다리기
 
-		// connect()
 		if (!bConnect) {
-			SOCKADDR_IN multiaddr;
+			// 소켓 주소 구조체 초기화
+			ZeroMemory(&remoteaddr, sizeof(remoteaddr));
+			remoteaddr.sin_family = AF_INET;
+			remoteaddr.sin_addr.s_addr = inet_addr(ip);
+			remoteaddr.sin_port = htons((u_short)port);
+
+			// 리시버 스레드 생성
+			hThread = CreateThread(NULL, 0, Receiver, (LPVOID)sock, 0, NULL);
+			if (hThread == NULL) { closesocket(sock); }
+			else { CloseHandle(hThread); }
+
+			// Connect
 			ZeroMemory(&multiaddr, sizeof(multiaddr));
 			multiaddr.sin_family = AF_INET;
-			multiaddr.sin_addr.s_addr = inet_addr(MULTICASTIP);
-			multiaddr.sin_port = htons(REMOTEPORT);
+			multiaddr.sin_addr.s_addr = inet_addr(ip);
+			multiaddr.sin_port = htons((u_short)port);
 			retval = connect(sock, (SOCKADDR *)&multiaddr, sizeof(multiaddr));
 			if (retval == SOCKET_ERROR) err_quit("connect()");
 			else {
@@ -428,13 +428,13 @@ DWORD WINAPI Receiver(LPVOID arg)
 	ZeroMemory(&localaddr, sizeof(localaddr));
 	localaddr.sin_family = AF_INET;
 	localaddr.sin_addr.s_addr = htonl(INADDR_ANY);
-	localaddr.sin_port = htons(REMOTEPORT);
+	localaddr.sin_port = htons((u_short)port);
 	retval = bind(sock, (SOCKADDR *)&localaddr, sizeof(localaddr));
 	if (retval == SOCKET_ERROR) err_quit("bind()");
 
 	// 멀티캐스트 그룹 가입
 	struct ip_mreq mreq;
-	mreq.imr_multiaddr.s_addr = inet_addr(MULTICASTIP);
+	mreq.imr_multiaddr.s_addr = inet_addr(ip);
 	mreq.imr_interface.s_addr = htonl(INADDR_ANY);
 	retval = setsockopt(sock, IPPROTO_IP, IP_ADD_MEMBERSHIP,
 		(char *)&mreq, sizeof(mreq));
@@ -507,12 +507,6 @@ DWORD WINAPI Receiver(LPVOID arg)
 	// 윈속 종료
 	WSACleanup();
 	return 0;
-}
-
-bool receiverAPPLY() {
-
-
-	return TRUE;
 }
 
 // 현재시간 리턴 함수
